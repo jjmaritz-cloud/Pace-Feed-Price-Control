@@ -328,6 +328,60 @@ UPLOAD_FILE_SLOTS = {
 }
 
 
+
+@st.cache_resource
+def get_runtime_upload_store():
+    """
+    Process-level upload store.
+
+    Streamlit file_uploader state clears on browser refresh. Disk writes can
+    also be unreliable on hosted Streamlit environments. This store keeps the
+    latest uploaded bytes alive for the running app process, so refresh/rerun
+    can still reload the Service Manager mapping.
+    """
+    return {}
+
+
+def save_uploaded_file_to_runtime_store(slot_key, uploaded_file):
+    if uploaded_file is None:
+        return None
+
+    try:
+        uploaded_file.seek(0)
+    except Exception:
+        pass
+
+    try:
+        data = uploaded_file.getvalue()
+    except Exception:
+        data = uploaded_file.read()
+
+    name = getattr(uploaded_file, "name", f"{slot_key}.xlsx")
+    ext = Path(name).suffix.lower().replace(".", "") or ("csv" if slot_key == "advisor" else "xlsx")
+
+    store = get_runtime_upload_store()
+    store[slot_key] = {
+        "name": name,
+        "ext": ext,
+        "bytes": data,
+        "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "size_bytes": len(data),
+    }
+    return store[slot_key]
+
+
+def get_runtime_upload_as_file(slot_key):
+    store = get_runtime_upload_store()
+    item = store.get(slot_key)
+    if not item or not item.get("bytes"):
+        return None
+
+    bio = io.BytesIO(item["bytes"])
+    bio.name = item.get("name", f"{slot_key}.xlsx")
+    return bio
+
+
+
 def load_upload_manifest():
     try:
         if UPLOAD_META_PATH.exists():
@@ -355,6 +409,10 @@ def save_uploaded_file_slot(slot_key, uploaded_file):
     if uploaded_file is None:
         return None
 
+    # Always save to process memory first. This survives browser refresh while
+    # the Streamlit app process remains alive.
+    runtime_info = save_uploaded_file_to_runtime_store(slot_key, uploaded_file)
+
     slot = UPLOAD_FILE_SLOTS[slot_key]
     ext = _upload_ext(uploaded_file, "csv" if slot_key == "advisor" else "xlsx")
 
@@ -367,23 +425,47 @@ def save_uploaded_file_slot(slot_key, uploaded_file):
     except Exception:
         pass
 
-    data = uploaded_file.getvalue()
-    stable_path.write_bytes(data)
-    version_path.write_bytes(data)
+    try:
+        data = uploaded_file.getvalue()
+    except Exception:
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
+        data = uploaded_file.read()
 
-    manifest = load_upload_manifest()
-    manifest[slot_key] = {
-        "label": slot["label"],
-        "original_name": getattr(uploaded_file, "name", stable_path.name),
-        "stable_path": str(stable_path),
-        "version_path": str(version_path),
-        "saved_name": stable_path.name,
-        "version_name": version_path.name,
-        "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "size_bytes": len(data),
-    }
-    save_upload_manifest(manifest)
-    return manifest[slot_key]
+    try:
+        stable_path.write_bytes(data)
+        version_path.write_bytes(data)
+
+        manifest = load_upload_manifest()
+        manifest[slot_key] = {
+            "label": slot["label"],
+            "original_name": getattr(uploaded_file, "name", stable_path.name),
+            "stable_path": str(stable_path),
+            "version_path": str(version_path),
+            "saved_name": stable_path.name,
+            "version_name": version_path.name,
+            "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "size_bytes": len(data),
+        }
+        save_upload_manifest(manifest)
+        return manifest[slot_key]
+
+    except Exception as e:
+        # Hosted Streamlit environments may not persist writes. Keep running
+        # from the runtime cache instead of losing the upload.
+        st.caption(f"Upload kept in app memory; disk save was not available: {e}")
+        return {
+            "label": slot["label"],
+            "original_name": getattr(uploaded_file, "name", runtime_info.get("name", slot_key) if runtime_info else slot_key),
+            "stable_path": "",
+            "version_path": "",
+            "saved_name": runtime_info.get("name", "") if runtime_info else "",
+            "version_name": "",
+            "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "size_bytes": len(data),
+        }
 
 
 def get_saved_upload_path(slot_key):
@@ -413,11 +495,14 @@ def list_upload_versions(slot_key):
 
 def read_saved_upload(slot_key):
     path = get_saved_upload_path(slot_key)
-    if not path:
-        return pd.DataFrame()
-    return read_excel_uploaded(path)
+    if path:
+        return read_excel_uploaded(path)
 
+    runtime_file = get_runtime_upload_as_file(slot_key)
+    if runtime_file is not None:
+        return read_excel_uploaded(runtime_file)
 
+    return pd.DataFrame()
 
 def read_upload_or_saved(slot_key, uploaded_file=None):
     """
@@ -1651,12 +1736,22 @@ def read_farm_master(uploaded):
     try:
         source = uploaded
 
-        # Auto-load the local Service Manager file when no manual upload is supplied.
+        # Auto-load the Service Manager / Tech Advisor mapping when no manual
+        # upload is supplied. Browser refresh clears st.file_uploader, so check
+        # runtime cache first, then disk, then local Windows dev fallback.
         if source is None:
-            if LOCAL_TECH_ADVISOR_FILE.exists():
-                source = LOCAL_TECH_ADVISOR_FILE
+            runtime_advisor_file = get_runtime_upload_as_file("advisor")
+            if runtime_advisor_file is not None:
+                source = runtime_advisor_file
             else:
-                return pd.DataFrame()
+                saved_advisor_path = get_saved_upload_path("advisor")
+                if saved_advisor_path is not None and Path(saved_advisor_path).exists():
+                    source = saved_advisor_path
+                elif LOCAL_TECH_ADVISOR_FILE.exists():
+                    # Local Windows fallback for development only.
+                    source = LOCAL_TECH_ADVISOR_FILE
+                else:
+                    return pd.DataFrame()
 
         # Work out file name and extension for both UploadedFile and Path.
         source_name = getattr(source, "name", str(source))
@@ -5898,15 +5993,26 @@ if farm_file is not None:
 if farm_master_file is not None:
     save_uploaded_file_slot("advisor", farm_master_file)
 
+with st.sidebar:
+    runtime_advisor = get_runtime_upload_as_file("advisor")
+    disk_advisor = get_saved_upload_path("advisor")
+    if runtime_advisor is not None:
+        st.success(f"Service Manager mapping saved in app memory: {getattr(runtime_advisor, 'name', 'advisor mapping')}")
+    elif disk_advisor is not None:
+        st.success(f"Service Manager mapping saved: {disk_advisor.name}")
 
-    if farm_master_file is None:
-        st.caption(r"Mapping file: C:\Pace Feed Price Control\Files to Upload\Tech Advisor Name List.csv")
+with st.sidebar:
+    saved_advisor_path = get_saved_upload_path("advisor")
+    if saved_advisor_path is not None:
+        st.success(f"Service Manager mapping saved: {saved_advisor_path.name}")
+    else:
+        st.caption(r"Mapping file: upload Service Manager / Tech Advisor mapping, or use local file C:\Pace Feed Price Control\Files to Upload\Tech Advisor Name List.csv")
 
     st.divider()
     week_ending_day = "Sunday"
     st.caption("Week ending: Sunday")
     st.caption("Recon review: use during week, at cutoff, or historically")
-    st.caption("After changing an Excel file, remove it from the uploader and re-upload the saved file.")
+    st.caption("Uploaded files are saved and should reload after page refresh.")
     st.caption("Support-first language is built in: the app highlights where help is needed, not where people have failed.")
 
 if (feedmill_file is None and get_saved_upload_path('feedmill') is None) or (farm_file is None and get_saved_upload_path('farm') is None):
@@ -5931,6 +6037,12 @@ week_ending_day = "Sunday"
 feedmill = prepare_feedmill(raw_feedmill, week_ending_day)
 farm = prepare_farm_recon(raw_farm)
 farm_summary = build_farm_summary(feedmill, farm, farm_master)
+
+if farm_master is None or farm_master.empty:
+    st.warning(
+        "Service Manager mapping is not loaded. Upload the Service Manager / Tech Advisor mapping file in the sidebar or Upload page so Service Manager names populate after refresh."
+    )
+
 weekly_feedmill = build_weekly_feedmill(feedmill)
 
 # Latest five weeks only for primary trend.
