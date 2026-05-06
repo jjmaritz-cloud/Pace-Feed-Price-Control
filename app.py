@@ -3981,6 +3981,25 @@ def render_farm_recon_score_insights(farm_df, farm_summary_df):
         helper_cols = [c for c in ["Farm Score %", "vs Last Week Num", "Farm Score Series"] if c in display.columns]
         grid_df = display[visible_cols + helper_cols].copy()
 
+        # Short display names keep the Farm Score table inside the screen width.
+        grid_df = grid_df.rename(columns={
+            "Sheds Needing Follow-up": "Follow-up",
+            "Missing Data": "Missing",
+            "Outside ±3t": "±3t Var",
+            "vs Last Week": "vs Last",
+        })
+        visible_cols = [c if c not in {
+            "Sheds Needing Follow-up": "Follow-up",
+            "Missing Data": "Missing",
+            "Outside ±3t": "±3t Var",
+            "vs Last Week": "vs Last",
+        } else {
+            "Sheds Needing Follow-up": "Follow-up",
+            "Missing Data": "Missing",
+            "Outside ±3t": "±3t Var",
+            "vs Last Week": "vs Last",
+        }[c] for c in visible_cols]
+
         if not HAS_AGGRID:
             st.dataframe(grid_df[visible_cols], use_container_width=True, hide_index=True, height=760)
             st.divider()
@@ -3993,13 +4012,15 @@ def render_farm_recon_score_insights(farm_df, farm_summary_df):
             filter=True,
             wrapText=False,
             autoHeight=False,
+            minWidth=70,
+            flex=1,
         )
 
         for c in helper_cols:
             gb.configure_column(c, hide=True)
 
         if "Farm Name" in grid_df.columns:
-            gb.configure_column("Farm Name", pinned="left", width=220)
+            gb.configure_column("Farm Name", pinned="left", minWidth=180, flex=2)
 
         base_style = JsCode("""
         function(params) {
@@ -4144,16 +4165,24 @@ def render_farm_recon_score_insights(farm_df, farm_summary_df):
                 gb.configure_column(c, cellStyle=base_style)
 
         if "Farm Score" in grid_df.columns:
-            gb.configure_column("Farm Score", width=170, cellStyle=score_style, cellRenderer=score_renderer)
-        if "vs Last Week" in grid_df.columns:
-            gb.configure_column("vs Last Week", width=120, cellStyle=delta_style)
+            gb.configure_column("Farm Score", minWidth=135, flex=1.35, cellStyle=score_style, cellRenderer=score_renderer)
+        if "vs Last" in grid_df.columns:
+            gb.configure_column("vs Last", minWidth=95, flex=0.95, cellStyle=delta_style)
         if "Sheds" in grid_df.columns:
-            gb.configure_column("Sheds", width=70)
-        for c in ["Sheds Needing Follow-up", "Missing Data", "Outside ±3t"]:
+            gb.configure_column("Sheds", minWidth=65, flex=0.65)
+        for c in ["Follow-up", "Missing", "±3t Var"]:
             if c in grid_df.columns:
-                gb.configure_column(c, width=110, cellStyle=count_style)
+                gb.configure_column(c, minWidth=95, flex=0.95, cellStyle=count_style)
         if "Status" in grid_df.columns:
-            gb.configure_column("Status", width=260, cellStyle=status_style, cellRenderer=status_renderer, wrapText=True, autoHeight=True)
+            gb.configure_column("Status", minWidth=230, flex=2.6, cellStyle=status_style, cellRenderer=status_renderer, wrapText=True, autoHeight=True)
+
+        gb.configure_grid_options(
+            suppressHorizontalScroll=True,
+            alwaysShowHorizontalScroll=False,
+            domLayout="normal",
+            onFirstDataRendered=JsCode("function(params) { params.api.sizeColumnsToFit(); }"),
+            onGridSizeChanged=JsCode("function(params) { params.api.sizeColumnsToFit(); }"),
+        )
 
         AgGrid(
             grid_df,
