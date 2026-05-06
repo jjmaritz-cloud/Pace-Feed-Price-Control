@@ -21,6 +21,156 @@ except Exception:
 
 from pathlib import Path
 
+# Feed Price Dashboard fix
+# Purpose:
+# 1) Hide rows where Farm Name is blank / None / nan
+# 2) Sort the Current Recon table by Recon Readiness % ascending
+# 3) Keep the fix safe if the percentage column is stored as text like '29%'
+
+import pandas as pd
+
+
+def remove_unknown_farm_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Removes rows where Farm Name is blank, missing, or placeholder-generated.
+    Use after Farm Name is created and again immediately before display.
+    """
+    if df is None or df.empty:
+        return df
+
+    out = df.copy()
+
+    farm_col = None
+    for possible_col in ["Farm Name", "Farm", "farm_name", "farm"]:
+        if possible_col in out.columns:
+            farm_col = possible_col
+            break
+
+    if farm_col is None:
+        return out
+
+    farm_clean = (
+        out[farm_col]
+        .fillna("")
+        .astype(str)
+        .str.replace("\xa0", " ", regex=False)
+        .str.replace("\u00a0", " ", regex=False)
+        .str.strip()
+    )
+
+    farm_lower = farm_clean.str.lower()
+
+    keep_rows = (
+        farm_clean.ne("")
+        & ~farm_lower.isin([
+            "nan",
+            "none",
+            "nat",
+            "<na>",
+            "null",
+            "-",
+            "unknown",
+            "unknown / unmapped farm",
+        ])
+        & ~farm_lower.str.contains(r"unknown\s*farm", regex=True, na=False)
+    )
+
+    return out.loc[keep_rows].copy()
+
+
+def clean_current_recon_table(current_recon_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply this as the LAST step immediately before rendering the Current Recon table.
+
+    Example:
+        current_recon_df = clean_current_recon_table(current_recon_df)
+        st.dataframe(current_recon_df, use_container_width=True, hide_index=True)
+
+    Important:
+        If the displayed table uses a different dataframe name, apply this function to
+        that final display dataframe instead, immediately before st.dataframe(), AgGrid,
+        or the custom HTML table is rendered.
+    """
+    if current_recon_df is None or current_recon_df.empty:
+        return current_recon_df
+
+    current_recon_df = current_recon_df.copy()
+
+    # ------------------------------------------------------------
+    # Hide rows with empty / missing / placeholder farm names
+    # ------------------------------------------------------------
+    if "Farm Name" in current_recon_df.columns:
+        farm_name_clean = (
+            current_recon_df["Farm Name"]
+            .fillna("")
+            .astype(str)
+            .str.replace("\u00a0", " ", regex=False)  # hidden non-breaking spaces
+            .str.strip()
+        )
+
+        farm_name_lower = farm_name_clean.str.lower()
+
+        hide_farm_row = (
+            (farm_name_clean == "")
+            | (farm_name_lower.isin(["none", "nan", "null", "-", "unknown"]))
+            | (farm_name_lower.str.contains(r"^unknown\s+farm", regex=True, na=False))
+        )
+
+        current_recon_df = current_recon_df.loc[~hide_farm_row].copy()
+
+    # ------------------------------------------------------------
+    # Sort Current Recon table ascending by Recon Readiness %
+    # ------------------------------------------------------------
+    if "Recon Readiness %" in current_recon_df.columns:
+        current_recon_df["_recon_sort"] = pd.to_numeric(
+            current_recon_df["Recon Readiness %"]
+            .astype(str)
+            .str.replace("%", "", regex=False)
+            .str.replace(",", "", regex=False)
+            .str.strip(),
+            errors="coerce",
+        )
+
+        current_recon_df = (
+            current_recon_df
+            .sort_values("_recon_sort", ascending=True, na_position="last")
+            .drop(columns=["_recon_sort"])
+        )
+
+    return current_recon_df
+
+
+# ------------------------------------------------------------------
+# PASTE-IN USAGE
+# ------------------------------------------------------------------
+# Place this immediately before the Current Recon table is rendered.
+#
+# current_recon_df = clean_current_recon_table(current_recon_df)
+#
+# st.dataframe(
+#     current_recon_df,
+#     use_container_width=True,
+#     hide_index=True,
+# )
+#
+# If your displayed table uses another dataframe name, use that name instead:
+#
+# display_df = clean_current_recon_table(display_df)
+# st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+
+
+# ------------------------------------------------------------------
+# QUICK PASTE VERSION
+# ------------------------------------------------------------------
+# Paste this directly before the Current Recon table is displayed:
+#
+# current_recon_df = clean_current_recon_table(current_recon_df)
+#
+# If your dataframe has a different name, replace current_recon_df with
+# the dataframe used for the Current Recon table.
+
+
 # ============================================================
 # Pace Feed Price Control
 # Standalone prototype
@@ -3890,31 +4040,38 @@ def render_brood_layer_price_perspective(feedmill_df, farm_df=None):
 
 def clean_display_farm_name_series(df, farm_name_col="Farm Name", farm_no_col="Farm No"):
     """
-    Prevents missing farm names showing as 'nan' in user-facing tables.
-    Uses Farm No as fallback where possible.
+    Cleans farm names for display without inventing placeholder farm names.
+
+    Important:
+    Do NOT create names like 'Unknown farm 2010'.
+    Those rows come from blank/unmapped Farm Name values and should be hidden,
+    not shown as a fake farm.
     """
     if df is None or df.empty:
         return pd.Series(dtype="object")
 
     if farm_name_col in df.columns:
-        names = df[farm_name_col].astype(str).str.strip()
+        names = (
+            df[farm_name_col]
+            .fillna("")
+            .astype(str)
+            .str.replace("\xa0", " ", regex=False)
+            .str.replace("\u00a0", " ", regex=False)
+            .str.strip()
+        )
     else:
         names = pd.Series("", index=df.index)
 
-    missing = names.str.lower().isin(["", "nan", "none", "nat", "<na>"])
+    invalid_names = ["", "nan", "none", "nat", "<na>", "null", "-", "unknown", "unknown / unmapped farm"]
 
-    if farm_no_col in df.columns:
-        farm_no = df[farm_no_col].astype(str).str.strip()
-        farm_no_missing = farm_no.str.lower().isin(["", "nan", "none", "nat", "<na>"])
-        names = np.where(
-            missing & ~farm_no_missing,
-            "Unknown farm " + farm_no,
-            names,
-        )
-        names = pd.Series(names, index=df.index)
-        missing = names.astype(str).str.strip().str.lower().isin(["", "nan", "none", "nat", "<na>"])
+    names = names.mask(names.str.lower().isin(invalid_names), "")
 
-    names = np.where(missing, "Unknown / unmapped farm", names)
+    # Remove any placeholder names that were already created somewhere else.
+    names = names.mask(
+        names.str.lower().str.contains(r"unknown\s*farm", regex=True, na=False),
+        ""
+    )
+
     return pd.Series(names, index=df.index)
 
 
@@ -4059,13 +4216,6 @@ def render_farm_recon_score_insights(farm_df, farm_summary_df):
 
         latest["Farm Name"] = clean_display_farm_name_series(latest, "Farm Name", "Farm No")
 
-        # Exclude blank/unmapped farm rows from the Farm Score table.
-        # These are not real farms and create a blank line in the score table.
-        farm_name_clean = latest["Farm Name"].astype(str).str.strip()
-        latest = latest[
-            farm_name_clean.ne("")
-            & ~farm_name_clean.str.lower().isin(["nan", "none", "nat", "<na>", "unknown / unmapped farm"])
-        ].copy()
 
         display = latest.copy()
         if "Area Manager" not in display.columns:
@@ -4831,8 +4981,10 @@ def build_current_recon_static_week_df(farm_df, farm_summary_df, selected_week_e
     merged["Support Note"] = merged.apply(static_note, axis=1)
 
     if "Farm Name" in merged.columns:
-
         merged["Farm Name"] = clean_display_farm_name_series(merged, "Farm Name", "Farm No")
+
+    # Final safety filter before any Current Recon / Farm Score summaries use this data.
+    merged = remove_unknown_farm_rows(merged)
 
     return merged.sort_values(["Area Manager", "Farm Name", "Shed No", "Shed / Flock"]).reset_index(drop=True)
 
