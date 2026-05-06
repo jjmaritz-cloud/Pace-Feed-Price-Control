@@ -4058,6 +4058,15 @@ def render_farm_recon_score_insights(farm_df, farm_summary_df):
         )
 
         latest["Farm Name"] = clean_display_farm_name_series(latest, "Farm Name", "Farm No")
+
+        # Exclude blank/unmapped farm rows from the Farm Score table.
+        # These are not real farms and create a blank line in the score table.
+        farm_name_clean = latest["Farm Name"].astype(str).str.strip()
+        latest = latest[
+            farm_name_clean.ne("")
+            & ~farm_name_clean.str.lower().isin(["nan", "none", "nat", "<na>", "unknown / unmapped farm"])
+        ].copy()
+
         display = latest.copy()
         if "Area Manager" not in display.columns:
             display["Area Manager"] = ""
@@ -4973,6 +4982,8 @@ def render_week_price_table_with_trends(df, *, height=620):
         filter=True,
         wrapText=False,
         autoHeight=False,
+        minWidth=70,
+        flex=1,
     )
 
     for col in display_df.columns:
@@ -4981,7 +4992,14 @@ def render_week_price_table_with_trends(df, *, height=620):
 
     for col in ["Farm No", "Farm Name", "Area Manager", "Progress Status"]:
         if col in display_df.columns:
-            gb.configure_column(col, pinned="left", width=105 if col == "Farm No" else 160)
+            if col == "Farm No":
+                gb.configure_column(col, pinned="left", minWidth=75, flex=0.7)
+            elif col == "Farm Name":
+                gb.configure_column(col, pinned="left", minWidth=145, flex=1.35)
+            elif col == "Area Manager":
+                gb.configure_column(col, pinned="left", minWidth=135, flex=1.1)
+            else:
+                gb.configure_column(col, pinned="left", minWidth=135, flex=1.1)
 
     money_formatter = JsCode("""
     function(params) {
@@ -5047,7 +5065,8 @@ def render_week_price_table_with_trends(df, *, height=620):
         gb.configure_column(
             col,
             type=["numericColumn"],
-            width=125,
+            minWidth=92,
+            flex=0.9,
             valueFormatter=money_formatter,
             cellStyle=price_cell_style,
         )
@@ -5057,19 +5076,28 @@ def render_week_price_table_with_trends(df, *, height=620):
             gb.configure_column(
                 col,
                 type=["numericColumn"],
-                width=145,
+                minWidth=110,
+                flex=1.0,
                 valueFormatter=money_formatter,
                 cellStyle=movement_cell_style,
             )
 
     if "Current Recon Confidence" in display_df.columns:
-        gb.configure_column("Current Recon Confidence", width=155)
+        gb.configure_column("Current Recon Confidence", minWidth=115, flex=0.95)
+
+    gb.configure_grid_options(
+        alwaysShowHorizontalScroll=False,
+        suppressHorizontalScroll=True,
+        domLayout="normal",
+        onFirstDataRendered=JsCode("function(params) { params.api.sizeColumnsToFit(); }"),
+        onGridSizeChanged=JsCode("function(params) { params.api.sizeColumnsToFit(); }"),
+    )
 
     AgGrid(
         display_df,
         gridOptions=gb.build(),
         height=height,
-        fit_columns_on_grid_load=False,
+        fit_columns_on_grid_load=True,
         allow_unsafe_jscode=True,
         update_mode=GridUpdateMode.NO_UPDATE if GridUpdateMode else None,
         theme="alpine",
@@ -5459,6 +5487,22 @@ def render_current_recon_page(farm_df, farm_summary_df):
     ].copy()
 
     display = display.rename(columns={"Area Manager": "Service Manager"})
+
+    # Put the rows needing the most attention at the top.
+    if "Recon Readiness %" in display.columns:
+        display["Recon Readiness %"] = pd.to_numeric(display["Recon Readiness %"], errors="coerce").fillna(0)
+        sort_cols = ["Recon Readiness %"]
+        ascending = [True]
+        if "Service Manager" in display.columns:
+            sort_cols.append("Service Manager")
+            ascending.append(True)
+        if "Farm Name" in display.columns:
+            sort_cols.append("Farm Name")
+            ascending.append(True)
+        if "Shed / Flock" in display.columns:
+            sort_cols.append("Shed / Flock")
+            ascending.append(True)
+        display = display.sort_values(sort_cols, ascending=ascending).reset_index(drop=True)
 
     status_cols = {
         "Bird Inv (End)": "Bird Inv OK",
