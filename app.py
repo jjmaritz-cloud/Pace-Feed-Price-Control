@@ -209,7 +209,7 @@ st.set_page_config(
     page_title=APP_TITLE,
     page_icon="🌾",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ------------------------------------------------------------
@@ -436,6 +436,124 @@ st.markdown(
         height: 0.35rem;
     }
 
+    /* ------------------------------------------------------------
+       App density / 80% style view
+    ------------------------------------------------------------ */
+    html {
+        font-size: 80%;
+    }
+
+    .main .block-container {
+        max-width: 1920px;
+        padding-top: 0.65rem;
+        padding-left: 1.25rem;
+        padding-right: 1.25rem;
+        padding-bottom: 1.25rem;
+    }
+
+    div[data-testid="stVerticalBlock"] {
+        gap: 0.55rem;
+    }
+
+    div[data-testid="stHorizontalBlock"] {
+        gap: 0.7rem;
+    }
+
+    .pf-hero {
+        padding: 1rem 1.2rem;
+        border-radius: 18px;
+        margin-bottom: 0.75rem;
+    }
+
+    .pf-hero h1 {
+        font-size: 1.75rem;
+    }
+
+    .pf-hero p {
+        font-size: 0.9rem;
+    }
+
+    .pf-card {
+        padding: 0.78rem 0.85rem;
+        border-radius: 15px;
+        min-height: 96px;
+    }
+
+    .pf-card-label {
+        font-size: 0.68rem;
+    }
+
+    .pf-card-value {
+        font-size: 1.32rem;
+    }
+
+    .pf-card-sub {
+        font-size: 0.74rem;
+    }
+
+    .pf-section-title {
+        font-size: 1.02rem;
+        margin: 0.45rem 0 0.3rem 0;
+    }
+
+    .pf-note {
+        padding: 0.7rem 0.8rem;
+        font-size: 0.82rem;
+        border-radius: 13px;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        padding: 0.34rem 0.62rem 0.36rem 0.62rem !important;
+        font-size: 0.78rem !important;
+        border-radius: 8px 8px 0 0 !important;
+    }
+
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0.22rem !important;
+        margin-bottom: 0.45rem !important;
+    }
+
+    .stDataFrame,
+    div[data-testid="stDataFrame"] {
+        font-size: 0.78rem;
+    }
+
+    .stButton button,
+    div[data-testid="stFormSubmitButton"] button {
+        padding: 0.35rem 0.65rem;
+        font-size: 0.8rem;
+        border-radius: 8px;
+    }
+
+    div[data-testid="stPlotlyChart"] {
+        margin-top: 0.15rem;
+        margin-bottom: 0.15rem;
+    }
+
+    /* ------------------------------------------------------------
+       Hide Streamlit sidebar completely by default
+    ------------------------------------------------------------ */
+    section[data-testid="stSidebar"] {
+        width: 0rem !important;
+        min-width: 0rem !important;
+        max-width: 0rem !important;
+        transform: translateX(-100%) !important;
+        overflow: hidden !important;
+        visibility: hidden !important;
+    }
+
+    section[data-testid="stSidebar"] > div {
+        width: 0rem !important;
+        min-width: 0rem !important;
+        max-width: 0rem !important;
+        padding: 0rem !important;
+        overflow: hidden !important;
+    }
+
+    button[data-testid="stBaseButton-headerNoPadding"],
+    button[kind="headerNoPadding"] {
+        display: block !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
